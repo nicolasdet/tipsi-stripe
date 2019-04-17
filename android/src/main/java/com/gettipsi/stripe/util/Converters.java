@@ -401,6 +401,10 @@ public static WritableMap convertAddressToWritableMap(final UserAddress address)
     return map.hasKey(key) ? map.getString(key) : null;
   }
 
+  public static boolean getBooleanOrFalse(@NonNull ReadableMap map, @NonNull String key) {
+    return map.hasKey(key) ? map.getBoolean(key) : false;
+  }
+  
   public static void putIfNotEmpty(final WritableMap map, final String key, final String value) {
     if (!TextUtils.isEmpty(value)) {
       map.putString(key, value);

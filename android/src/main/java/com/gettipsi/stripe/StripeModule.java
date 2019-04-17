@@ -9,6 +9,7 @@ import android.support.annotation.Nullable;
 import android.text.TextUtils;
 
 import com.facebook.react.bridge.ActivityEventListener;
+import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.BaseActivityEventListener;
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
@@ -16,13 +17,18 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
+
 import com.gettipsi.stripe.dialog.AddCardDialogFragment;
 import com.gettipsi.stripe.util.ArgCheck;
 import com.gettipsi.stripe.util.Converters;
 import com.gettipsi.stripe.util.Fun0;
+
 import com.google.android.gms.wallet.WalletConstants;
+
 import com.stripe.android.SourceCallback;
 import com.stripe.android.Stripe;
+import com.stripe.android.model.StripePaymentSource;
+import com.stripe.android.model.GooglePayMethod;
 import com.stripe.android.TokenCallback;
 import com.stripe.android.model.Source;
 import com.stripe.android.model.SourceParams;
@@ -46,6 +52,10 @@ import static com.gettipsi.stripe.util.InitializationOptions.ANDROID_PAY_MODE_PR
 import static com.gettipsi.stripe.util.InitializationOptions.ANDROID_PAY_MODE_TEST;
 import static com.gettipsi.stripe.util.InitializationOptions.PUBLISHABLE_KEY;
 import static com.gettipsi.stripe.util.InitializationOptions.EPHEMERAL_KEY;
+import static com.gettipsi.stripe.util.InitializationOptions.SHOW_GOOGLE_PAY;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public class StripeModule extends ReactContextBaseJavaModule {
 
@@ -65,10 +75,12 @@ public class StripeModule extends ReactContextBaseJavaModule {
 
   @Nullable
   private Promise mCurrentPromise;
-
+  
   @Nullable
   private Source mCreatedSource;
 
+  private boolean mCurrentShowGoogle = false;
+  
   private String mPublicKey;
   private Stripe mStripe;
   private PayFlow mPayFlow;
@@ -78,16 +90,40 @@ public class StripeModule extends ReactContextBaseJavaModule {
 
   private final ActivityEventListener mActivityEventListener = new BaseActivityEventListener() {
 
+    @Nullable
+    private String readPaymentObjectType(String selectedPayment) {
+      // This should be available through a higher level static
+      JSONObject jsonObject;
+      try {
+        jsonObject = new JSONObject(selectedPayment);
+      } catch (JSONException ignored) {
+        jsonObject = null;
+      }
+      if(jsonObject == null)
+        return null;
+
+      return jsonObject.optString(StripePaymentSource.FIELD_OBJECT);
+
+    }
+
     @Override
     public void onActivityResult(Activity activity, int requestCode, int resultCode, Intent data) {
         if (requestCode == REQUEST_CODE_SELECT_SOURCE) {
             super.onActivityResult(activity, requestCode, resultCode, data);
             if(resultCode == Activity.RESULT_OK) {
-              String selectedSource = data.getStringExtra(PaymentMethodsActivity.EXTRA_SELECTED_PAYMENT);
-              Source source = Source.fromString(selectedSource);
-              WritableMap result = convertSourceToWritableMap(source);
-              result.putString("resultType", "STPSource");
-              mCurrentPromise.resolve(result);
+              String selectedPayment = data.getStringExtra(PaymentMethodsActivity.EXTRA_SELECTED_PAYMENT);
+
+              String objectType = readPaymentObjectType(selectedPayment);
+              if(objectType.equals(GooglePayMethod.VALUE_GOOGLE_PAY)) {
+                  WritableMap result = Arguments.createMap();
+                  result.putString("resultType", "STPGooglePayPaymentMethod");
+                  mCurrentPromise.resolve(result);
+              } else {
+                  Source source = Source.fromString(selectedPayment);
+                  WritableMap result = convertSourceToWritableMap(source);
+                  result.putString("resultType", "STPSource");
+                  mCurrentPromise.resolve(result);
+              }
             }
             else {
               mCurrentPromise.reject(
@@ -175,7 +211,10 @@ public class StripeModule extends ReactContextBaseJavaModule {
 
   private void launchWithCustomer() {
     Activity currentActivity = getCurrentActivity();
-    new PaymentMethodsActivityStarter(currentActivity).startForResult(REQUEST_CODE_SELECT_SOURCE);
+    final Intent paymentMethodsIntent = new PaymentMethodsActivityStarter(currentActivity).newIntent();
+    if(mCurrentShowGoogle)
+      paymentMethodsIntent.putExtra(PaymentMethodsActivity.EXTRA_SHOW_GOOGLE_PAY, true);
+    currentActivity.startActivityForResult(paymentMethodsIntent, REQUEST_CODE_SELECT_SOURCE);
   }
 
 
@@ -384,6 +423,7 @@ public class StripeModule extends ReactContextBaseJavaModule {
       ArgCheck.notEmptyString(mPublicKey);
 
       String ephemeralKey = Converters.getStringOrNull(params, EPHEMERAL_KEY);
+      mCurrentShowGoogle = Converters.getBooleanOrFalse(params, SHOW_GOOGLE_PAY);
       mCurrentPromise = promise;
 
       CustomerSession.initCustomerSession(
