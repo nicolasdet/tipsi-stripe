@@ -111,18 +111,24 @@ public class StripeModule extends ReactContextBaseJavaModule {
         if (requestCode == REQUEST_CODE_SELECT_SOURCE) {
             super.onActivityResult(activity, requestCode, resultCode, data);
             if(resultCode == Activity.RESULT_OK) {
-              String selectedPayment = data.getStringExtra(PaymentMethodsActivity.EXTRA_SELECTED_PAYMENT);
-
-              String objectType = readPaymentObjectType(selectedPayment);
+              String objectType = data.getStringExtra(
+                      PaymentMethodsActivity.EXTRA_SELECTED_PAYMENT_TYPE);
               if(objectType.equals(GooglePayMethod.VALUE_GOOGLE_PAY)) {
                   WritableMap result = Arguments.createMap();
                   result.putString("resultType", "STPGooglePayPaymentMethod");
                   mCurrentPromise.resolve(result);
               } else {
+                  String selectedPayment = data.getStringExtra(
+                        PaymentMethodsActivity.EXTRA_SELECTED_PAYMENT);
                   Source source = Source.fromString(selectedPayment);
-                  WritableMap result = convertSourceToWritableMap(source);
-                  result.putString("resultType", "STPSource");
-                  mCurrentPromise.resolve(result);
+                  if(source != null) {
+                    WritableMap result = convertSourceToWritableMap(source);
+                    result.putString("resultType", "STPSource");
+                    mCurrentPromise.resolve(result);
+                  }
+                  else {
+                    mCurrentPromise.resolve(null);
+                  }
               }
             }
             else {
