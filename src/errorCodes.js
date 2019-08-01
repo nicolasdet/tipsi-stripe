@@ -80,6 +80,14 @@ const errorCodes = {
     errorCode: 'redirectFailed',
     description: 'Source redirect failed',
   },
+  paymentHandlerActionStatusFailed: {
+    errorCode: 'paymentHandlerActionStatusFailed',
+    description: 'Payment authentication failed',
+  },
+  paymentHandlerActionStatusCanceled: {
+    errorCode: 'paymentHandlerActionStatusCanceled',
+    description: 'Payment authentication canceled',
+  },
 
   // Description provided by stripe api
   api: {

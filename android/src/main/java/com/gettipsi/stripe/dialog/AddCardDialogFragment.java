@@ -5,6 +5,7 @@ import android.app.Dialog;
 import android.app.DialogFragment;
 import android.content.DialogInterface;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
 import android.support.v4.content.ContextCompat;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -27,12 +28,15 @@ import com.gettipsi.stripe.StripeModule;
 import com.gettipsi.stripe.util.CardFlipAnimator;
 import com.gettipsi.stripe.util.Converters;
 import com.gettipsi.stripe.util.Utils;
+import com.stripe.android.ApiResultCallback;
 import com.stripe.android.SourceCallback;
 import com.stripe.android.Stripe;
 import com.stripe.android.TokenCallback;
 import com.stripe.android.model.Card;
+import com.stripe.android.model.PaymentMethod;
 import com.stripe.android.model.Source;
 import com.stripe.android.model.SourceParams;
+import com.stripe.android.model.PaymentMethodCreateParams;
 import com.stripe.android.model.Token;
 
 /**
@@ -189,42 +193,46 @@ public class AddCardDialogFragment extends DialogFragment {
     doneButton.setEnabled(false);
     progressBar.setVisibility(View.VISIBLE);
     final CreditCard fromCard = from.getCreditCard();
-    final Card card = new Card(
+
+    final Card card = Card.create(
       fromCard.getCardNumber(),
       fromCard.getExpMonth(),
       fromCard.getExpYear(),
-      fromCard.getSecurityCode());
+      fromCard.getSecurityCode()
+    );
 
     String errorMessage = Utils.validateCard(card);
     if (errorMessage == null) {
       if (CREATE_CARD_SOURCE) {
-        SourceParams cardSourceParams = SourceParams.createCardParams(card);
-        StripeModule.getInstance().getStripe().createSource(
-          cardSourceParams,
-          new SourceCallback() {
-            @Override
-            public void onSuccess(Source source) {
-              // Normalize data with iOS SDK
-              final WritableMap sourceMap = Converters.convertSourceToWritableMap(source);
-              sourceMap.putMap("card", Converters.mapToWritableMap(source.getSourceTypeData()));
-              sourceMap.putNull("sourceTypeData");
+        PaymentMethodCreateParams.Card paymentMethodCreateParamsCard =
+                card.toPaymentMethodParamsCard();
+        PaymentMethodCreateParams paymentMethodCreateParams =
+                PaymentMethodCreateParams.create(paymentMethodCreateParamsCard, null);
 
-              if (promise != null) {
-                promise.resolve(sourceMap);
-                promise = null;
-              }
-              successful = true;
-              dismiss();
-            }
+        StripeModule.getInstance().getStripe().createPaymentMethod(
+                paymentMethodCreateParams,
+                new ApiResultCallback<PaymentMethod>() {
+                  @Override
+                  public void onSuccess(@NonNull PaymentMethod paymentMethod) {
+                    WritableMap params = Arguments.createMap();
+                    params.putString("id", paymentMethod.id);
 
-            @Override
-            public void onError(Exception error) {
-              doneButton.setEnabled(true);
-              progressBar.setVisibility(View.GONE);
-              showToast(error.getLocalizedMessage());
-            }
-          }
-        );
+                    if (promise != null) {
+                      promise.resolve(params);
+                      promise = null;
+                    }
+
+                    successful = true;
+                    dismiss();
+                  }
+
+                  @Override
+                  public void onError(@NonNull Exception error) {
+                    doneButton.setEnabled(true);
+                    progressBar.setVisibility(View.GONE);
+                    showToast(error.getLocalizedMessage());
+                  }
+                });
       } else {
         StripeModule.getInstance().getStripe().createToken(
           card,

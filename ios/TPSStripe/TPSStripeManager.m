@@ -26,6 +26,9 @@ NSString * const kErrorKeyDeviceNotSupportsNativePay = @"deviceNotSupportsNative
 NSString * const kErrorKeyNoPaymentRequest = @"noPaymentRequest";
 NSString * const kErrorKeyNoMerchantIdentifier = @"noMerchantIdentifier";
 NSString * const kErrorKeyNoAmount = @"noAmount";
+NSString * const kErrorKeyPaymentHandlerActionStatusFailed = @"paymentHandlerActionStatusFailed";
+NSString * const kErrorKeyPaymentHandlerActionStatusCanceled = @"paymentHandlerActionStatusCanceled";
+
 
 @implementation RCTConvert (STPBankAccountHolderType)
 
@@ -114,7 +117,7 @@ NSString * const TPSPaymentNetworkVisa = @"visa";
     
     NSDictionary *ephemeralKey;
     STPJSONResponseCompletionBlock ephemeralKeyReceiver;
-    id<STPPaymentMethod> selectedPaymentMethod;
+    id<STPPaymentOption> selectedPaymentMethod;
 }
 
 - (instancetype)init {
@@ -249,6 +252,46 @@ RCT_EXPORT_METHOD(createTokenWithBankAccount:(NSDictionary *)params
     }];
 }
 
+- (UIViewController *)authenticationPresentingViewController {
+    return RCTPresentedViewController();
+}
+
+RCT_EXPORT_METHOD(handleNextActionForPayment:(NSDictionary *)params
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
+    
+    NSString *paymentIntentClientSecret = params[@"clientSecret"];
+    NSString *returnURL = params[@"returnURL"];
+
+    promiseResolver = resolve;
+    promiseRejector = reject;
+
+    [[STPPaymentHandler sharedHandler] handleNextActionForPayment:paymentIntentClientSecret withAuthenticationContext:self returnURL:returnURL completion:^(STPPaymentHandlerActionStatus status, STPPaymentIntent * paymentIntent, NSError * handlerError) {
+         if (handlerError) {
+             NSDictionary *jsError = [errorCodes valueForKey:kErrorKeyApi];
+             [self rejectPromiseWithCode:jsError[kErrorKeyCode] message:handlerError.localizedDescription];
+         } else {
+            switch (status) {
+                case STPPaymentHandlerActionStatusSucceeded: {
+                     resolve(paymentIntent);
+                }
+                     break;
+                case STPPaymentHandlerActionStatusCanceled: {
+                    NSDictionary *error = [errorCodes valueForKey:kErrorKeyPaymentHandlerActionStatusCanceled];
+                    reject(error[kErrorKeyCode], error[kErrorKeyDescription], handlerError);
+                }
+                     break;
+                case STPPaymentHandlerActionStatusFailed: {
+                    NSDictionary *error = [errorCodes valueForKey:kErrorKeyPaymentHandlerActionStatusFailed];
+                    reject(error[kErrorKeyCode], error[kErrorKeyDescription], handlerError);
+                }
+                     break;
+            }
+         }
+    }];
+}
+
+
 RCT_EXPORT_METHOD(createSourceWithParams:(NSDictionary *)params
                     resolver:(RCTPromiseResolveBlock)resolve
                     rejecter:(RCTPromiseRejectBlock)reject) {
@@ -362,7 +405,6 @@ RCT_EXPORT_METHOD(paymentRequestWithCardForm:(NSDictionary *)options
     NSUInteger requiredBillingAddressFields = [self billingType:options[@"requiredBillingAddressFields"]];
     NSString *companyName = options[@"companyName"] ? options[@"companyName"] : @"";
     STPUserInformation *prefilledInformation = [self userInformation:options[@"prefilledInformation"]];
-    NSString *managedAccountCurrency = options[@"managedAccountCurrency"];
     NSString *nextPublishableKey = options[@"publishableKey"] ? options[@"publishableKey"] : publishableKey;
     UIModalPresentationStyle formPresentation = [self formPresentation:options[@"presentation"]];
     STPTheme *theme = [self formTheme:options[@"theme"]];
@@ -371,12 +413,10 @@ RCT_EXPORT_METHOD(paymentRequestWithCardForm:(NSDictionary *)options
     [configuration setRequiredBillingAddressFields:requiredBillingAddressFields];
     [configuration setCompanyName:companyName];
     [configuration setPublishableKey:nextPublishableKey];
-    [configuration setCreateCardSources:options[@"createCardSource"] ? options[@"createCardSource"] : false];
 
     STPAddCardViewController *addCardViewController = [[STPAddCardViewController alloc] initWithConfiguration:configuration theme:theme];
     [addCardViewController setDelegate:self];
     [addCardViewController setPrefilledInformation:prefilledInformation];
-    [addCardViewController setManagedAccountCurrency:managedAccountCurrency];
     // STPAddCardViewController must be shown inside a UINavigationController.
     UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:addCardViewController];
     [navigationController setModalPresentationStyle:formPresentation];
@@ -494,13 +534,11 @@ RCT_EXPORT_METHOD(paymentRequestWithPaymentMethods:(NSDictionary *)options
     [configuration setRequiredBillingAddressFields:requiredBillingAddressFields];
     [configuration setCompanyName:companyName];
     [configuration setPublishableKey:nextPublishableKey];
-    [configuration setCreateCardSources:options[@"createCardSource"] ? options[@"createCardSource"] : false];
     
     // apply pay
     [configuration setAppleMerchantIdentifier:merchantId];
-    [customerContext setIncludeApplePaySources:options[@"includeApplePaySources"] ? options[@"includeApplePaySources"] : false];
 
-    STPPaymentMethodsViewController *paymentMethodsViewController = [[STPPaymentMethodsViewController alloc] initWithConfiguration:configuration theme:theme customerContext:customerContext delegate:self];
+    STPPaymentOptionsViewController *paymentMethodsViewController = [[STPPaymentOptionsViewController alloc] initWithConfiguration:configuration theme:theme customerContext:customerContext delegate:self];
     
     
     UINavigationController *navigationController = [[UINavigationController alloc] initWithRootViewController:paymentMethodsViewController];
@@ -616,24 +654,15 @@ RCT_EXPORT_METHOD(completePaymentRequestWithPaymentMethods:(NSDictionary *)ephem
 
 #pragma mark - STPAddCardViewControllerDelegate
 
+
 - (void)addCardViewController:(STPAddCardViewController *)controller
-                didCreateToken:(STPToken *)token
+                didCreatePaymentMethod:(STPPaymentMethod *)paymentMethod
                     completion:(STPErrorBlock)completion {
     [RCTPresentedViewController() dismissViewControllerAnimated:YES completion:nil];
 
     requestIsCompleted = YES;
     completion(nil);
-    [self resolvePromise:[self convertTokenObject:token]];
-}
-
-- (void)addCardViewController:(STPAddCardViewController *)controller
-               didCreateSource:(STPSource *)source
-                   completion:(STPErrorBlock)completion {
-    [RCTPresentedViewController() dismissViewControllerAnimated:YES completion:nil];
-
-    requestIsCompleted = YES;
-    completion(nil);
-    [self resolvePromise:[self convertSourceObject:source]];
+    [self resolvePromise:[self convertPaymentMethodObject:paymentMethod]];
 }
 
 - (void)addCardViewControllerDidCancel:(STPAddCardViewController *)addCardViewController {
@@ -717,7 +746,7 @@ RCT_EXPORT_METHOD(completePaymentRequestWithPaymentMethods:(NSDictionary *)ephem
 
 #pragma mark - STPPaymentMethodsViewControllerDelegate
 
-- (void)paymentMethodsViewController:(nonnull STPPaymentMethodsViewController *)paymentMethodsViewController didFailToLoadWithError:(nonnull NSError *)error {
+- (void)paymentMethodsViewController:(nonnull STPPaymentOptionsViewController *)paymentMethodsViewController didFailToLoadWithError:(nonnull NSError *)error {
     [RCTPresentedViewController() dismissViewControllerAnimated:YES completion:nil];
     
     if (!requestIsCompleted) {
@@ -727,7 +756,7 @@ RCT_EXPORT_METHOD(completePaymentRequestWithPaymentMethods:(NSDictionary *)ephem
     }
 }
 
-- (void)paymentMethodsViewControllerDidCancel:(nonnull STPPaymentMethodsViewController *)paymentMethodsViewController {
+- (void)paymentMethodsViewControllerDidCancel:(nonnull STPPaymentOptionsViewController *)paymentMethodsViewController {
     [RCTPresentedViewController() dismissViewControllerAnimated:YES completion:nil];
     
     if (!requestIsCompleted) {
@@ -737,7 +766,7 @@ RCT_EXPORT_METHOD(completePaymentRequestWithPaymentMethods:(NSDictionary *)ephem
     }
 }
 
-- (void)paymentMethodsViewControllerDidFinish:(nonnull STPPaymentMethodsViewController *)paymentMethodsViewController {
+- (void)paymentMethodsViewControllerDidFinish:(nonnull STPPaymentOptionsViewController *)paymentMethodsViewController {
     [RCTPresentedViewController() dismissViewControllerAnimated:YES completion:nil];
     
     requestIsCompleted = YES;
@@ -749,7 +778,7 @@ RCT_EXPORT_METHOD(completePaymentRequestWithPaymentMethods:(NSDictionary *)ephem
     } else if ([selectedPaymentMethod class] == [STPCard class]){
         result = [self convertCardObject:(STPCard*)selectedPaymentMethod];
         [result setValue:@"STPCard" forKey:@"resultType"];
-    } else if ([selectedPaymentMethod class] == [STPApplePayPaymentMethod class]){
+    } else if ([selectedPaymentMethod class] == [STPApplePayPaymentOption class]){
         result = [@{} mutableCopy];
         [result setValue:@"STPApplePayPaymentMethod" forKey:@"resultType"];
     } else {
@@ -759,13 +788,23 @@ RCT_EXPORT_METHOD(completePaymentRequestWithPaymentMethods:(NSDictionary *)ephem
     [self resolvePromise:result];
 }
 
-- (void)paymentMethodsViewController:(STPPaymentMethodsViewController *)paymentMethodsViewController didSelectPaymentMethod:(id<STPPaymentMethod>)paymentMethod {
+- (void)paymentMethodsViewController:(STPPaymentOptionsViewController *)paymentMethodsViewController didSelectPaymentMethod:(id<STPPaymentOption>)paymentMethod {
     // Save selected payment method
     selectedPaymentMethod = paymentMethod;
 }
 
 - (STPAPIClient *)newAPIClient {
     return [[STPAPIClient alloc] initWithPublishableKey:[Stripe defaultPublishableKey]];
+}
+
+
+- (NSDictionary *)convertPaymentMethodObject:(STPPaymentMethod*)paymentMethod {
+    NSMutableDictionary *result = [@{} mutableCopy];
+
+    // Token
+    [result setValue:paymentMethod.stripeId forKey:@"id"];
+
+    return result;
 }
 
 - (NSDictionary *)convertTokenObject:(STPToken*)token {
@@ -1332,5 +1371,6 @@ RCT_EXPORT_METHOD(completePaymentRequestWithPaymentMethods:(NSDictionary *)ephem
 {
     return YES;
 }
+
 
 @end

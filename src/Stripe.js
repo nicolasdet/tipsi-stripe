@@ -194,6 +194,20 @@ class Stripe {
       toPlatformEphermalKey(ephemeralKey)
     )
   }
+
+  handleNextActionForPayment = (params = {}) => {
+    checkInit(this);
+    checkArgs(
+      types.handleNextActionForPaymentPropType,
+      params,
+      "params",
+      "Stripe.handleNextActionForPayment"
+    );
+
+    return StripeModule.handleNextActionForPayment(
+      params
+    );
+  };
 }
 
 export default new Stripe()

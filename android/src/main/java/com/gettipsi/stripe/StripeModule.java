@@ -7,8 +7,10 @@ import android.os.AsyncTask;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.text.TextUtils;
+import android.util.Log;
 
 import com.facebook.react.bridge.ActivityEventListener;
+import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.BaseActivityEventListener;
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
@@ -21,11 +23,16 @@ import com.gettipsi.stripe.util.ArgCheck;
 import com.gettipsi.stripe.util.Converters;
 import com.gettipsi.stripe.util.Fun0;
 import com.google.android.gms.wallet.WalletConstants;
+import com.stripe.android.ApiResultCallback;
+import com.stripe.android.PaymentIntentResult;
 import com.stripe.android.SourceCallback;
 import com.stripe.android.Stripe;
 import com.stripe.android.TokenCallback;
+import com.stripe.android.model.PaymentIntent;
+import com.stripe.android.model.Source;
 import com.stripe.android.model.Source;
 import com.stripe.android.model.SourceParams;
+import com.stripe.android.model.StripeIntent;
 import com.stripe.android.model.Token;
 import com.stripe.android.CustomerSession;
 import com.stripe.android.model.Customer;
@@ -52,6 +59,7 @@ public class StripeModule extends ReactContextBaseJavaModule {
   private static final String MODULE_NAME = StripeModule.class.getSimpleName();
 
   private static final int REQUEST_CODE_SELECT_SOURCE = 55;
+  private static final int REQUEST_CODE_PAYMENT = 50000;
 
   private static StripeModule sInstance = null;
 
@@ -80,7 +88,30 @@ public class StripeModule extends ReactContextBaseJavaModule {
 
     @Override
     public void onActivityResult(Activity activity, int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_CODE_SELECT_SOURCE) {
+        if (requestCode == REQUEST_CODE_PAYMENT) {
+          super.onActivityResult(activity, requestCode, resultCode, data);
+          mStripe.onPaymentResult(requestCode, data,
+                  new ApiResultCallback<PaymentIntentResult>() {
+                    @Override
+                    public void onSuccess(@NonNull PaymentIntentResult result) {
+                      final PaymentIntent paymentIntent = result.getIntent();
+                      final PaymentIntent.Status status = paymentIntent.getStatus();
+
+                      if (status == PaymentIntent.Status.Canceled) {
+                        mCurrentPromise.reject("error", "cancelled");
+                      } else {
+                        WritableMap params = Arguments.createMap();
+                        params.putString("paymentIntentId", paymentIntent.getId());
+                        mCurrentPromise.resolve(params);
+                      }
+                    }
+
+                    @Override
+                    public void onError(@NonNull Exception e) {
+                      mCurrentPromise.reject("error", e.getMessage());
+                    }
+                  });
+        } else if (requestCode == REQUEST_CODE_SELECT_SOURCE) {
             super.onActivityResult(activity, requestCode, resultCode, data);
             if(resultCode == Activity.RESULT_OK) {
               String selectedSource = data.getStringExtra(PaymentMethodsActivity.EXTRA_SELECTED_PAYMENT);
@@ -178,6 +209,20 @@ public class StripeModule extends ReactContextBaseJavaModule {
     new PaymentMethodsActivityStarter(currentActivity).startForResult(REQUEST_CODE_SELECT_SOURCE);
   }
 
+
+  @ReactMethod
+  public void handleNextActionForPayment(final ReadableMap params, final Promise promise) {
+    try {
+      ArgCheck.nonNull(mStripe);
+      ArgCheck.notEmptyString(mPublicKey);
+
+      Activity currentActivity = getCurrentActivity();
+      mCurrentPromise = promise;
+      mStripe.authenticateSetup(currentActivity, params.getString("clientSecret"));
+    } catch (Exception e) {
+      promise.reject(toErrorCode(e), e.getMessage());
+    }
+  }
 
   @ReactMethod
   public void deviceSupportsAndroidPay(final Promise promise) {
@@ -335,7 +380,7 @@ public class StripeModule extends ReactContextBaseJavaModule {
 
       @Override
       public void onSuccess(Source source) {
-        if (Source.REDIRECT.equals(source.getFlow())) {
+        if (Source.SourceFlow.REDIRECT.equals(source.getFlow())) {
           Activity currentActivity = getCurrentActivity();
           if (currentActivity == null) {
             promise.reject(
@@ -479,19 +524,19 @@ public class StripeModule extends ReactContextBaseJavaModule {
         }
 
         switch (source.getStatus()) {
-          case Source.CHARGEABLE:
-          case Source.CONSUMED:
+          case Source.SourceStatus.CHARGEABLE:
+          case Source.SourceStatus.CONSUMED:
             promise.resolve(convertSourceToWritableMap(source));
             break;
-          case Source.CANCELED:
+          case Source.SourceStatus.CANCELED:
             promise.reject(
               getErrorCode(mErrorCodes, "redirectCancelled"),
               getDescription(mErrorCodes, "redirectCancelled")
             );
             break;
-          case Source.PENDING:
-          case Source.FAILED:
-          case Source.UNKNOWN:
+          case Source.SourceStatus.PENDING:
+          case Source.SourceStatus.FAILED:
+          case Source.SourceType.UNKNOWN:
             promise.reject(
               getErrorCode(mErrorCodes, "redirectFailed"),
               getDescription(mErrorCodes, "redirectFailed")
@@ -501,5 +546,4 @@ public class StripeModule extends ReactContextBaseJavaModule {
       }
     }.execute();
   }
-
 }

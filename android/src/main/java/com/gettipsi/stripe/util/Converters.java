@@ -179,28 +179,12 @@ public static ArrayList<CountrySpecification> getAllowedShippingCountries(final 
   }
 
   public static Card createCard(final ReadableMap cardData) {
-    return new Card(
+    return Card.create(
       // required fields
       cardData.getString("number"),
       cardData.getInt("expMonth"),
       cardData.getInt("expYear"),
-      // additional fields
-      getValue(cardData, "cvc"),
-      getValue(cardData, "name"),
-      getValue(cardData, "addressLine1"),
-      getValue(cardData, "addressLine2"),
-      getValue(cardData, "addressCity"),
-      getValue(cardData, "addressState"),
-      getValue(cardData, "addressZip"),
-      getValue(cardData, "addressCountry"),
-      getValue(cardData, "brand"),
-      getValue(cardData, "last4"),
-      getValue(cardData, "fingerprint"),
-      getValue(cardData, "funding"),
-      getValue(cardData, "country"),
-      getValue(cardData, "currency"),
-      getValue(cardData, "id"),
-      null
+      getValue(cardData, "cvc")
     );
   }
 
